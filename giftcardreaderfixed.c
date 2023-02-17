@@ -11,7 +11,7 @@
 
 #include <stdio.h>
 #include <strings.h>
-#include <string.h> // LOGIC FIX: adding to alleviate warning during compiling of the program
+#include <string.h>
 
 // interpreter for THX-1138 assembly
 void animate(char *msg, unsigned char *program) {
@@ -29,7 +29,12 @@ void animate(char *msg, unsigned char *program) {
             case 0x00:
                 break;
             case 0x01:
+            //fuzzer1
+            // &&
+            //fuzzer2
+            	if(arg1<16){
                 regs[arg1] = *mptr;
+                };
                 break;
             case 0x02:
                 *mptr = regs[arg1];
@@ -38,7 +43,10 @@ void animate(char *msg, unsigned char *program) {
                 mptr += (char)arg1;
                 break;
             case 0x04:
+            //fuzzer3
+            	if((arg1<16) && (arg2<16)){
                 regs[arg2] = arg1;
+                }
                 break;
             case 0x05:
                 regs[arg1] ^= regs[arg2];
@@ -54,10 +62,11 @@ void animate(char *msg, unsigned char *program) {
             case 0x08:
                 goto done;
             case 0x09:
-                pc += (unsigned char)arg1; // HANG FIX: make this an unsigned character which only takes positive values  // https://www.cs.utah.edu/~germain/PPS/Topics/unsigned_integer.html
+            //hang
+                pc += (unsigned char)arg1; //Fixed hang.gft
                 break;
             case 0x10:
-                if (zf) pc += (char)arg1;
+                if (zf) pc += (unsigned char)arg1;
                 break;
         }
         pc+=3;
@@ -67,18 +76,20 @@ done:
     return;
 }
 
-    void print_gift_card_info(struct this_gift_card *thisone) {
+void print_gift_card_info(struct this_gift_card *thisone) {
 	struct gift_card_data *gcd_ptr;
 	struct gift_card_record_data *gcrd_ptr;
 	struct gift_card_amount_change *gcac_ptr;
     struct gift_card_program *gcp_ptr;
-	gcd_ptr = thisone->gift_card_data;
-    (unsigned int)gcac_ptr->amount_added; //fuzz 2 fix
 
+	gcd_ptr = thisone->gift_card_data;
 	printf("   Merchant ID: %32.32s\n",gcd_ptr->merchant_id);
 	printf("   Customer ID: %32.32s\n",gcd_ptr->customer_id);
 	printf("   Num records: %d\n",gcd_ptr->number_of_gift_card_records);
+	
+	
 	for(int i=0;i<gcd_ptr->number_of_gift_card_records; i++) {
+	
   		gcrd_ptr = (struct gift_card_record_data *) gcd_ptr->gift_card_record_data[i];
 		if (gcrd_ptr->type_of_record == 1) {
 			printf("      record_type: amount_change\n");
@@ -94,7 +105,7 @@ done:
 		}
 		else if (gcrd_ptr->type_of_record == 3) {
             gcp_ptr = gcrd_ptr->actual_record;
-			printf("      record_type: animated message\n");
+            printf("      record_type: animated message\n");
             printf("      message: %s\n", gcp_ptr->message);
             printf("  [running embedded program]  \n");
             animate(gcp_ptr->message, gcp_ptr->program);
@@ -114,7 +125,6 @@ void gift_card_json(struct this_gift_card *thisone) {
     printf("  \"customer_id\": \"%32.32s\",\n", gcd_ptr->customer_id);
     printf("  \"total_value\": %d,\n", get_gift_card_value(thisone));
     printf("  \"records\": [\n");
-
 	for(int i=0;i<gcd_ptr->number_of_gift_card_records; i++) {
         gcrd_ptr = (struct gift_card_record_data *) gcd_ptr->gift_card_record_data[i];
         printf("    {\n");
@@ -186,17 +196,20 @@ struct this_gift_card *gift_card_reader(FILE *input_fd) {
 
 		struct gift_card_data *gcd_ptr;
 		/* JAC: Why aren't return types checked? */
-
-        //crash1 fix
-        // creating an unsigned int value for malloc  and read it in
-        // using an unsigned int b/c the value will always have to be non-negative 
-        // source https://www.cs.utah.edu/~germain/PPS/Topics/unsigned_integer.html
-        unsigned int absolute_value = ret_val-> num_bytes;
-        fread(&absolute_value, 4,1, input_fd);
+		fread(&ret_val->num_bytes, 4,1, input_fd);
+		
+		//crash1
+		//crash2
+		if (ret_val->num_bytes<0){ //if statement to fix the crashes
+		printf("Not valid, please enter a valid byte value in the giftcardwriter.c");
+		printf("\n");
+		exit(0);
+		}
 
 		// Make something the size of the rest and read it in
-		ptr = malloc(abs(absolute_value));
-		fread(ptr, abs(absolute_value), 1, input_fd);
+		ptr = malloc(ret_val->num_bytes);
+		fread(ptr, ret_val->num_bytes, 1, input_fd);
+
         optr = ptr-4;
 
 		gcd_ptr = ret_val->gift_card_data = malloc(sizeof(struct gift_card_data));
@@ -206,16 +219,15 @@ struct this_gift_card *gift_card_reader(FILE *input_fd) {
 		gcd_ptr->customer_id = ptr;
 		ptr += 32;	
 		/* JAC: Something seems off here... */
-
-        // LOGIC FIX: changing this to int as one shouldn't store a  number as a char
-        //fuzz 1
-		gcd_ptr->number_of_gift_card_records = *((int *)ptr);
+		gcd_ptr->number_of_gift_card_records = *((char *)ptr);
 		ptr += 4;
 
 		gcd_ptr->gift_card_record_data = (void *)malloc(gcd_ptr->number_of_gift_card_records*sizeof(void*));
+		
 
 		// Now ptr points at the gift card recrod data
 		for (int i=0; i<=gcd_ptr->number_of_gift_card_records; i++){
+		
 			//printf("i: %d\n",i);
 			struct gift_card_record_data *gcrd_ptr;
 			gcrd_ptr = gcd_ptr->gift_card_record_data[i] = malloc(sizeof(struct gift_card_record_data));
@@ -252,6 +264,7 @@ struct this_gift_card *gift_card_reader(FILE *input_fd) {
 				ptr=ptr+strlen((char *)gcrd_ptr->actual_record)+1;
 			}
             // BDG: never seen one of these in the wild
+            // text animatino (BETA)
             if (gcrd_ptr->type_of_record == 3) {
                 gcp_ptr->message = malloc(32);
                 gcp_ptr->program = malloc(256);
@@ -269,25 +282,20 @@ struct this_gift_card *gift_card_reader(FILE *input_fd) {
 // BDG: why not a local variable here?
 struct this_gift_card *thisone;
 
-
-/// CRASH 2 FIX -- empty argument passed 
 int main(int argc, char **argv) {
+	//Crash3
+	for (int i=0; i<argc; i++){ //For loop for handling more than 2 command line arguments
+	if (i>2){
+	//printf("argv[%d]: %s\n", i,argv[i]);
+	printf("ONLY 2 Arguments Accepted, Try Again \n");
+	exit(0);
+		}
+	}
     // BDG: no argument checking?
-    	FILE *input_fd = fopen(argv[2],"r");
-        if (input_fd == NULL ) {
-            printf("please re-enter the crash case, empty string passed!");
-          //  exit(EXIT_FAILURE); I realized that I needed to fail w/o error otherwise it would break the git workflow
-        }
-        else if (argc < 3)
-        {
-            printf("please re-enter the crash case, empty string passed!");
-            ///exit(EXIT_FAILURE); I realized that I needed to fail w/o error otherwise it would break the git workflow
-        }
-        else {
-	    thisone = gift_card_reader(input_fd);
-	    if (argv[1][0] == '1') print_gift_card_info(thisone);
-        else if (argv[1][0] == '2') gift_card_json(thisone);
-        }
-    
+	FILE *input_fd = fopen(argv[2],"r");
+	thisone = gift_card_reader(input_fd);
+	if (argv[1][0] == '1') print_gift_card_info(thisone);
+    else if (argv[1][0] == '2') gift_card_json(thisone);
+
 	return 0;
 }
